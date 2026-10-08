@@ -48,6 +48,9 @@ OWNERSHIP_API_URL = "https://eapi.askedgar.io/v1/ownership"
 OWNERSHIP_API_KEY = ASKEDGAR_API_KEY
 SPLIT_STATUS_URL = "https://eapi.askedgar.io/v1/split-status"
 SPLIT_STATUS_KEY = ASKEDGAR_API_KEY
+PREMARKET_STATS_URL = "https://eapi.askedgar.io/v1/premarket-stats"
+INTRADAY_RUNNERS_URL = "https://eapi.askedgar.io/v1/intraday-runners"
+AFTERHOURS_STATS_URL = "https://eapi.askedgar.io/v1/afterhours-stats"
 POLL_INTERVAL = 1.0
 
 # Massive / Polygon API (primary source for top gainers)
@@ -410,27 +413,8 @@ def _cached_news_results(ticker: str) -> list[dict] | None:
     return _cached_fetch(f"news:{ticker}", _fetch)
 
 
-def _cached_jmt415_results(ticker: str) -> list[dict] | None:
-    """Fetch jmt415 notes for a ticker via form_type filter, cached."""
-    def _fetch():
-        try:
-            resp = requests.get(
-                NEWS_API_URL,
-                headers={"API-KEY": NEWS_API_KEY, "Content-Type": "application/json"},
-                params={"ticker": ticker, "form_type": "jmt415", "page": 1, "limit": 3},
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("status") == "success":
-                return data.get("results", [])
-        except Exception as e:
-            print(f"JMT415 API error for {ticker}: {e}")
-        return None
-    return _cached_fetch(f"jmt415:{ticker}", _fetch)
-
-
-def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None, str | None, list[dict]]:
-    """Fetch recent news/8-K/6-K (top 2), latest grok, and jmt415 notes."""
+def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None, str | None]:
+    """Fetch recent news/8-K/6-K (top 2) and latest grok."""
     headlines = []
     grok_line = None
     grok_date = None
@@ -450,8 +434,7 @@ def fetch_news_and_grok(ticker: str) -> tuple[list[dict], str | None, str | None
                         break
                 grok_date = r.get("created_at") or r.get("filed_at", "")
                 grok_url = r.get("url") or r.get("document_url")
-    jmt415_notes = _cached_jmt415_results(ticker) or []
-    return headlines, grok_line, grok_date, grok_url, jmt415_notes
+    return headlines, grok_line, grok_date, grok_url
 
 
 def fetch_screener_data(ticker: str) -> dict | None:
@@ -560,6 +543,32 @@ def fetch_gap_stats(ticker: str) -> list[dict]:
             print(f"Gap stats API error for {ticker}: {e}")
         return []
     return _cached_fetch(f"gapstats:{ticker}", _fetch) or []
+
+
+def fetch_session_stats(ticker: str) -> dict:
+    """Fetch premarket / intraday-runner / after-hours spike history for a ticker.
+    Returns {"premarket": [...], "intraday": [...], "afterhours": [...]} (date descending)."""
+    out = {}
+    for key, url in (("premarket", PREMARKET_STATS_URL),
+                     ("intraday", INTRADAY_RUNNERS_URL),
+                     ("afterhours", AFTERHOURS_STATS_URL)):
+        def _fetch(url=url, key=key):
+            try:
+                resp = requests.get(
+                    url,
+                    headers={"API-KEY": ASKEDGAR_API_KEY, "Content-Type": "application/json"},
+                    params={"ticker": ticker, "page": 1, "limit": 100},
+                    timeout=10,
+                )
+                data = resp.json()
+                if data.get("status") == "success":
+                    return data.get("results", [])
+                print(f"Session stats API [{resp.status_code}] {ticker} {key}: {data}")
+            except Exception as e:
+                print(f"Session stats API error for {ticker} {key}: {e}")
+            return []
+        out[key] = _cached_fetch(f"{key}stats:{ticker}", _fetch) or []
+    return out
 
 
 def fetch_offerings(ticker: str) -> list[dict]:
@@ -921,7 +930,7 @@ class DilutionOverlay:
                    in_play_warrants: list[dict] | None = None,
                    in_play_converts: list[dict] | None = None,
                    stock_price: float = 0.0,
-                   jmt415_notes: list[dict] | None = None,
+                   session_stats: dict | None = None,
                    gap_stats: list[dict] | None = None,
                    offerings: list[dict] | None = None,
                    ownership: dict | None = None,
@@ -1014,9 +1023,9 @@ class DilutionOverlay:
         if gap_stats:
             self._add_gap_stats_card(gap_stats)
 
-        # ── JMT415 Previous Notes card ──
-        if jmt415_notes:
-            self._add_jmt415_card(jmt415_notes)
+        # ── Session Stats card (premarket / intraday runners / after-hours) ──
+        if session_stats:
+            self._add_session_stats_card(session_stats)
 
         # ── Management Commentary card ──
         commentary = dilution.get("mgmt_commentary") if has_dilution else None
@@ -1266,6 +1275,109 @@ class DilutionOverlay:
             tk.Label(row, text=value, fg=val_color, bg=BG_CARD,
                      font=FONT_MONO_BOLD, anchor="w").pack(side="left")
 
+    def _add_session_stats_card(self, stats: dict):
+        """Session Stats card: premarket / intraday-runner / after-hours spike summaries.
+        Each sub-section only shows when the ticker has history for that session."""
+        from datetime import datetime
+        pm = stats.get("premarket") or []
+        ir = stats.get("intraday") or []
+        ah = stats.get("afterhours") or []
+        if not (pm or ir or ah):
+            return
+        card = self._make_card(self.content_frame, title="Session Stats")
+        body = tk.Frame(card, bg=BG_CARD, padx=14, pady=10)
+        body.pack(fill="x")
+
+        def mean(vals):
+            vals = [v for v in vals if v is not None]
+            return sum(vals) / len(vals) if vals else None
+
+        def pct_of(rows, cond):
+            return (sum(1 for r in rows if cond(r)) / len(rows) * 100) if rows else 0
+
+        def ratio_pct(num, den):
+            return (num / den - 1) * 100 if num is not None and den else None
+
+        def high_after_11(rows):
+            # Same rule as Gap Stats: high_time hour >= 11 in the API's timestamp
+            def late(r):
+                try:
+                    return datetime.fromisoformat(r.get("high_time") or "").hour >= 11
+                except ValueError:
+                    return False
+            return pct_of(rows, late)
+
+        def fmt_pct(v, sign=True):
+            if v is None:
+                return "N/A"
+            return f"{v:+.0f}%" if sign else f"{v:.0f}%"
+
+        def fmt_dollars(v):
+            return "N/A" if v is None else f"${fmt_millions(v)}"
+
+        sections = []
+        if pm:
+            sections.append(("PREMARKET SPIKES", [
+                ("Spikes / Last", f"{len(pm)} · {pm[0].get('date', 'N/A')}"),
+                ("Avg Spike %", fmt_pct(mean(r.get("percentage_gain") for r in pm))),
+                ("Avg Gap at Open", fmt_pct(mean(r.get("gap_percentage") for r in pm))),
+                ("Avg Open vs PM High",
+                 fmt_pct(mean(ratio_pct(r.get("market_open"), r.get("high_price")) for r in pm))),
+                ("Opened <50% of PM High",
+                 fmt_pct(pct_of(pm, lambda r: r.get("market_open") and r.get("high_price")
+                                and r["market_open"] < 0.5 * r["high_price"]), sign=False)),
+                ("Avg PM $ Volume", fmt_dollars(mean(r.get("premarket_dollar_volume") for r in pm))),
+            ]))
+        if ir:
+            ratio = mean(r.get("daily_volume_ratio") for r in ir)
+            sections.append(("INTRADAY RUNNERS", [
+                ("Runners / Last", f"{len(ir)} · {ir[0].get('date', 'N/A')}"),
+                ("Avg Open→High", fmt_pct(mean(r.get("open_to_high_pct") for r in ir))),
+                ("Avg Volume Ratio", "N/A" if ratio is None else f"{ratio:.0f}x"),
+                ("Halted", fmt_pct(pct_of(ir, lambda r: (r.get("est_halt_minutes") or 0) > 0), sign=False)),
+                ("Closed <50% of Range",
+                 fmt_pct(pct_of(ir, lambda r: r.get("close_under_50pct_of_range") is True), sign=False)),
+                ("New High After 11am", fmt_pct(high_after_11(ir), sign=False)),
+            ]))
+        if ah:
+            sections.append(("AFTER-HOURS SPIKES", [
+                ("Spikes / Last", f"{len(ah)} · {ah[0].get('date', 'N/A')}"),
+                ("Avg Spike %", fmt_pct(mean(r.get("percentage_gain") for r in ah))),
+                ("Avg AH Close vs Close", fmt_pct(mean(r.get("gap_percentage") for r in ah))),
+                ("Avg AH Close vs AH High",
+                 fmt_pct(mean(ratio_pct(r.get("afterhours_close"), r.get("high_price")) for r in ah))),
+                ("Avg AH $ Volume", fmt_dollars(mean(r.get("afterhours_dollar_volume") for r in ah))),
+            ]))
+
+        ORANGE = "#B96A16"
+
+        def color_for(label, value):
+            try:
+                v = float(value.rstrip("%"))
+            except ValueError:
+                return FG
+            if "vs PM High" in label or "vs AH High" in label:
+                give_back = -v  # how much of the spike was gone; smaller is better
+                return GREEN if give_back <= 25 else (ORANGE if give_back <= 50 else RED)
+            if "<50%" in label:
+                return GREEN if v <= 50 else (ORANGE if v <= 74 else RED)
+            if "After 11am" in label:
+                return GREEN if v >= 45 else (ORANGE if v >= 21 else RED)
+            if "Spike %" in label or "Open→High" in label:
+                return GREEN
+            return FG
+
+        for i, (title, rows) in enumerate(sections):
+            tk.Label(body, text=title, fg="#FFD600", bg=BG_CARD,
+                     font=FONT_UI_BOLD, anchor="w").pack(fill="x", pady=((8 if i else 0), 4))
+            for label, value in rows:
+                row = tk.Frame(body, bg=BG_CARD)
+                row.pack(fill="x", pady=1)
+                tk.Label(row, text=label, fg=FG_DIM, bg=BG_CARD,
+                         font=FONT_MONO, width=24, anchor="w").pack(side="left")
+                tk.Label(row, text=value, fg=color_for(label, value), bg=BG_CARD,
+                         font=FONT_MONO_BOLD, anchor="w").pack(side="left")
+
 
     def _add_offerings_card(self, offerings: list[dict], stock_price: float = 0.0,
                             url: str = ""):
@@ -1337,35 +1449,6 @@ class DilutionOverlay:
 
         if url:
             self._bind_card_click(card, url)
-
-    def _add_jmt415_card(self, notes: list[dict]):
-        """JMT415 Previous Notes card with bordered panels per note."""
-        card = self._make_card(self.content_frame, title="JMT415 Previous Notes")
-        body = tk.Frame(card, bg=BG_CARD, padx=10, pady=10)
-        body.pack(fill="x")
-
-        for i, note in enumerate(notes):
-            date = (note.get("filed_at") or "")[:10]
-            text = (note.get("summary") or note.get("title") or "Note").strip()
-            row_bg = BG_ROW if i % 2 == 0 else BG_ROW_ALT
-
-            row = tk.Frame(body, bg=row_bg,
-                           highlightbackground=BORDER_INNER, highlightthickness=1)
-            row.pack(fill="x", pady=2)
-
-            inner = tk.Frame(row, bg=row_bg, padx=10, pady=8)
-            inner.pack(fill="x")
-
-            tk.Label(inner, text=date, fg=FG_DIM, bg=row_bg,
-                     font=FONT_MONO).pack(anchor="w")
-            note_label = tk.Label(inner, text=text, fg=FG, bg=row_bg,
-                                  font=FONT_UI, anchor="w",
-                                  wraplength=350, justify="left")
-            note_label.pack(fill="x", pady=(2, 0))
-
-            def _rewrap(event, lbl=note_label):
-                lbl.config(wraplength=max(event.width - 40, 100))
-            row.bind("<Configure>", _rewrap)
 
     def _add_ownership_card(self, ownership: dict):
         """Ownership card showing latest reported date with owner table."""
@@ -1770,9 +1853,10 @@ class DilutionOverlay:
         def fetch():
             dilution = fetch_dilution_data(ticker)
             screener = fetch_screener_data(ticker)
-            news, grok_line, grok_date, grok_url, jmt415_notes = fetch_news_and_grok(ticker)
+            news, grok_line, grok_date, grok_url = fetch_news_and_grok(ticker)
             warrants, converts, stock_price = fetch_in_play_dilution(ticker)
             gap_stats = fetch_gap_stats(ticker)
+            session_stats = fetch_session_stats(ticker)
             recent_offerings = fetch_offerings(ticker)
             ownership = fetch_ownership(ticker)
             split_status = fetch_split_status(ticker)
@@ -1783,7 +1867,7 @@ class DilutionOverlay:
             self.root.after(0, self._update_history_badge, history_rating, history_url)
             self.root.after(0, self._show_data, ticker, dilution or {}, screener,
                             news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
-                            jmt415_notes, gap_stats, recent_offerings, ownership, split_status)
+                            session_stats, gap_stats, recent_offerings, ownership, split_status)
 
         threading.Thread(target=fetch, daemon=True).start()
 

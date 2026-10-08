@@ -150,7 +150,7 @@ Everything is in `das_monitor.py` (~1770 lines). No separate modules, no framewo
 5. Reverse Split Status
 6. Recent Offerings
 7. Gap Stats
-8. JMT415 Notes
+8. Session Stats (premarket spikes, intraday runners, after-hours spikes — each sub-section only shows when the ticker has history)
 9. Mgmt Commentary
 10. Ownership
 
@@ -164,6 +164,7 @@ Everything is in `das_monitor.py` (~1770 lines). No separate modules, no framewo
 | `/v1/dilution-data-advanced` | `fetch_in_play_dilution()` — same rows as `/v1/dilution-data` plus owners, which show under price protection |
 | `/v1/ai-chart-analysis` | `fetch_chart_analysis()` |
 | `/v1/gap-stats` | `fetch_gap_stats()` |
+| `/v1/premarket-stats`, `/v1/intraday-runners`, `/v1/afterhours-stats` | `fetch_session_stats()` — summarized into the Session Stats card |
 | `/v1/offerings` | `fetch_offerings()` |
 | `/v1/ownership` | `fetch_ownership()` |
 | `/v1/split-status` | `fetch_split_status()` |
