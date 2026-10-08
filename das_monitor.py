@@ -51,7 +51,6 @@ SPLIT_STATUS_KEY = ASKEDGAR_API_KEY
 PREMARKET_STATS_URL = "https://eapi.askedgar.io/v1/premarket-stats"
 INTRADAY_RUNNERS_URL = "https://eapi.askedgar.io/v1/intraday-runners"
 AFTERHOURS_STATS_URL = "https://eapi.askedgar.io/v1/afterhours-stats"
-AGREEMENTS_API_URL = "https://eapi.askedgar.io/v1/agreements"
 POLL_INTERVAL = 1.0
 
 # Massive / Polygon API (primary source for top gainers)
@@ -572,28 +571,6 @@ def fetch_session_stats(ticker: str) -> dict:
     return out
 
 
-def fetch_equity_restrictions(ticker: str) -> list[dict]:
-    """Fetch equity-restriction agreements (lock-ups, standstills) for the ticker, newest first."""
-    def _fetch():
-        try:
-            resp = requests.get(
-                AGREEMENTS_API_URL,
-                headers={"API-KEY": ASKEDGAR_API_KEY, "Content-Type": "application/json"},
-                params={"ticker": ticker, "agreement_type": "equity_restriction",
-                        "page": 1, "limit": 10},
-                timeout=10,
-            )
-            data = resp.json()
-            if data.get("status") == "success":
-                rows = data.get("results", [])
-                return sorted(rows, key=lambda r: r.get("filed_at") or "", reverse=True)
-            print(f"Agreements API [{resp.status_code}] {ticker}: {data}")
-        except Exception as e:
-            print(f"Agreements API error for {ticker}: {e}")
-        return []
-    return _cached_fetch(f"restrictions:{ticker}", _fetch) or []
-
-
 def fetch_offerings(ticker: str) -> list[dict]:
     """Fetch recent offerings for the ticker (up to 5)."""
     def _fetch():
@@ -957,8 +934,7 @@ class DilutionOverlay:
                    gap_stats: list[dict] | None = None,
                    offerings: list[dict] | None = None,
                    ownership: dict | None = None,
-                   split_status: list[dict] | None = None,
-                   restrictions: list[dict] | None = None):
+                   split_status: list[dict] | None = None):
         self._clear()
 
         dilution_url = f"https://app.askedgar.io/ticker/{ticker}/dilution"
@@ -1042,10 +1018,6 @@ class DilutionOverlay:
         # ── Recent Offerings card ──
         if offerings:
             self._add_offerings_card(offerings[:3], stock_price, url=dilution_url)
-
-        # ── Equity Restrictions card ──
-        if restrictions:
-            self._add_restrictions_card(restrictions[:3])
 
         # ── Gap Stats card ──
         if gap_stats:
@@ -1435,78 +1407,6 @@ class DilutionOverlay:
                 tk.Label(row, text=value, fg=color_for(label, value), bg=BG_CARD,
                          font=FONT_MONO_BOLD, anchor="w").pack(side="left")
 
-
-    def _add_restrictions_card(self, agreements: list[dict]):
-        """Equity Restrictions card: one bordered row per agreement (newest first).
-        Long text wraps and is capped; clicking a row opens its Ask Edgar filing page."""
-        from datetime import date
-        card = self._make_card(self.content_frame, title="Equity Restrictions")
-        body = tk.Frame(card, bg=BG_CARD, padx=14, pady=10)
-        body.pack(fill="x")
-        today = date.today()
-
-        def clip(text, n):
-            text = " ".join((text or "").split())
-            return text if len(text) <= n else text[:n - 1].rstrip() + "…"
-
-        for i, a in enumerate(agreements):
-            row_bg = BG_ROW if i % 2 == 0 else BG_ROW_ALT
-            row = tk.Frame(body, bg=row_bg,
-                           highlightbackground=BORDER_INNER, highlightthickness=1)
-            row.pack(fill="x", pady=2)
-            inner = tk.Frame(row, bg=row_bg, padx=10, pady=6)
-            inner.pack(fill="x")
-
-            # Line 1: filed | from (if it differs) | duration | end date, colored by how close it is
-            filed = (a.get("filed_at") or "")[:10]
-            parts = [(f"Filed: {filed}", FG_DIM)]
-            start = (a.get("restriction_date") or "")[:10]
-            if start and start != filed:
-                parts.append((f"From: {start}", FG_DIM))
-            if a.get("duration_in_days"):
-                parts.append((f"{a['duration_in_days']}d", FG))
-            end = (a.get("equity_restriction_end_date") or "")[:10]
-            if end:
-                try:
-                    days_left = (date.fromisoformat(end) - today).days
-                except ValueError:
-                    days_left = None
-                if days_left is None or days_left < 0:
-                    parts.append((f"Ended: {end}", FG_DIM))
-                else:
-                    parts.append((f"Ends: {end} ({days_left}d)",
-                                  "#FF9800" if days_left <= 30 else GREEN))
-            meta = tk.Frame(inner, bg=row_bg)
-            meta.pack(fill="x")
-            for j, (text, color) in enumerate(parts):
-                if j:
-                    tk.Label(meta, text=" | ", fg=FG_DIM, bg=row_bg,
-                             font=FONT_MONO).pack(side="left")
-                tk.Label(meta, text=text, fg=color, bg=row_bg,
-                         font=FONT_MONO if color == FG_DIM else FONT_MONO_BOLD).pack(side="left")
-
-            # Lines 2-3: details, then exempt issuances — wrapped and capped
-            wrapped = []
-            details = clip(a.get("details"), 320)
-            if details:
-                lbl = tk.Label(inner, text=details, fg="white", bg=row_bg, font=FONT_UI,
-                               anchor="w", justify="left", wraplength=350)
-                lbl.pack(fill="x", pady=(3, 0))
-                wrapped.append(lbl)
-            exempt = clip(a.get("exempt_issuances"), 200)
-            if exempt:
-                lbl = tk.Label(inner, text=f"Exempt: {exempt}", fg=FG_DIM, bg=row_bg,
-                               font=FONT_MONO, anchor="w", justify="left", wraplength=350)
-                lbl.pack(fill="x", pady=(3, 0))
-                wrapped.append(lbl)
-
-            def _rewrap(event, labels=wrapped):
-                for lbl in labels:
-                    lbl.config(wraplength=max(event.width - 40, 100))
-            row.bind("<Configure>", _rewrap)
-
-            if a.get("askedgar_url"):
-                self._bind_card_click(row, a["askedgar_url"])
 
     def _add_offerings_card(self, offerings: list[dict], stock_price: float = 0.0,
                             url: str = ""):
@@ -1989,7 +1889,6 @@ class DilutionOverlay:
             recent_offerings = fetch_offerings(ticker)
             ownership = fetch_ownership(ticker)
             split_status = fetch_split_status(ticker)
-            restrictions = fetch_equity_restrictions(ticker)
             # Fetch chart analysis for history badge
             chart = fetch_chart_analysis(ticker)
             history_rating = chart.get("rating", "") if chart else ""
@@ -1997,8 +1896,7 @@ class DilutionOverlay:
             self.root.after(0, self._update_history_badge, history_rating, history_url)
             self.root.after(0, self._show_data, ticker, dilution or {}, screener,
                             news, grok_line, grok_date, grok_url, warrants, converts, stock_price,
-                            session_stats, gap_stats, recent_offerings, ownership, split_status,
-                            restrictions)
+                            session_stats, gap_stats, recent_offerings, ownership, split_status)
 
         threading.Thread(target=fetch, daemon=True).start()
 
