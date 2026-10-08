@@ -16,7 +16,7 @@ When you switch tickers in DAS Trader Pro or thinkorswim, the overlay automatica
 - **In-play dilution** – Active warrants and convertibles near current price, color-coded by risk
 - **Recent offerings** – Historical offering data with ATM detection
 - **Gap statistics** – Gap-up performance metrics with color-coded thresholds
-- **JMT415 analyst notes** – Recent analyst commentary
+- **Session statistics** – How the stock's past premarket spikes, intraday runs, and after-hours spikes played out (did they hold or fade), color-coded like gap stats
 - **Management commentary** – From Ask Edgar's dilution analysis
 - **Ownership data** – Latest reported insider/institutional holdings
 
@@ -52,7 +52,7 @@ If you're new to coding or "vibe coding," the easiest way to get this running is
 
 Open Claude Code in VS Code and tell it:
 
-> "I want to clone this GitHub repo and set it up: https://github.com/jasontange/Top-Gainers-Dilution-Monitor-V2-Public"
+> "I want to clone this GitHub repo and set it up: https://github.com/jasontange/Dilution-Monitor-V3"
 
 Claude will:
 - Install **git** if you don't have it
@@ -149,8 +149,8 @@ Open DAS Trader Pro or thinkorswim alongside it. Click on a ticker and the data 
 <summary><b>Alternative: Setup via command line</b></summary>
 
 ```bash
-git clone https://github.com/jasontange/Top-Gainers-Dilution-Monitor-V2-Public.git
-cd Top-Gainers-Dilution-Monitor-V2-Public
+git clone https://github.com/jasontange/Dilution-Monitor-V3.git
+cd Dilution-Monitor-V3
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your API key and TradingView session cookie
