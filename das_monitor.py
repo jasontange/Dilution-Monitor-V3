@@ -1025,7 +1025,7 @@ class DilutionOverlay:
 
         # ── Session Stats card (premarket / intraday runners / after-hours) ──
         if session_stats:
-            self._add_session_stats_card(session_stats)
+            self._add_session_stats_card(session_stats, gap_stats)
 
         # ── Management Commentary card ──
         commentary = dilution.get("mgmt_commentary") if has_dilution else None
@@ -1275,10 +1275,11 @@ class DilutionOverlay:
             tk.Label(row, text=value, fg=val_color, bg=BG_CARD,
                      font=FONT_MONO_BOLD, anchor="w").pack(side="left")
 
-    def _add_session_stats_card(self, stats: dict):
+    def _add_session_stats_card(self, stats: dict, gap_stats: list[dict] | None = None):
         """Session Stats card: premarket / intraday-runner / after-hours spike summaries.
-        Each sub-section only shows when the ticker has history for that session."""
-        from datetime import datetime
+        Each sub-section only shows when the ticker has history for that session.
+        gap_stats rows are only used to find the next-day open after an after-hours spike."""
+        from datetime import datetime, date, timedelta
         pm = stats.get("premarket") or []
         ir = stats.get("intraday") or []
         ah = stats.get("afterhours") or []
@@ -1306,6 +1307,25 @@ class DilutionOverlay:
                 except ValueError:
                     return False
             return pct_of(rows, late)
+
+        def next_day_open(ah_row, candidates):
+            """Regular-session open on the first trading day after an after-hours spike,
+            taken from whichever stats row (premarket / gap / runner) exists within 4 days.
+            None when no row covers the next session."""
+            try:
+                d0 = date.fromisoformat(ah_row.get("date") or "")
+            except ValueError:
+                return None
+            best = None
+            for r in candidates:
+                try:
+                    d = date.fromisoformat(r.get("date") or "")
+                except ValueError:
+                    continue
+                if d0 < d <= d0 + timedelta(days=4) and r.get("market_open") \
+                        and (best is None or d < best[0]):
+                    best = (d, r["market_open"])
+            return best[1] if best else None
 
         def fmt_pct(v, sign=True):
             if v is None:
@@ -1340,12 +1360,19 @@ class DilutionOverlay:
                 ("New High After 11am", fmt_pct(high_after_11(ir), sign=False)),
             ]))
         if ah:
+            candidates = pm + ir + (gap_stats or [])
+            follow = [ratio_pct(next_day_open(r, candidates), r.get("afterhours_close")) for r in ah]
+            follow = [f for f in follow if f is not None]
+            matched = f"  ({len(follow)} of {len(ah)})" if follow else ""
+            held = (sum(1 for f in follow if f >= 0) / len(follow) * 100) if follow else None
             sections.append(("AFTER-HOURS SPIKES", [
                 ("Spikes / Last", f"{len(ah)} · {ah[0].get('date', 'N/A')}"),
                 ("Avg Spike %", fmt_pct(mean(r.get("percentage_gain") for r in ah))),
                 ("Avg AH Close vs Close", fmt_pct(mean(r.get("gap_percentage") for r in ah))),
                 ("Avg AH Close vs AH High",
                  fmt_pct(mean(ratio_pct(r.get("afterhours_close"), r.get("high_price")) for r in ah))),
+                ("Next Open vs AH Close", fmt_pct(mean(follow)) + matched),
+                ("Held Into Next Open", fmt_pct(held, sign=False)),
                 ("Avg AH $ Volume", fmt_dollars(mean(r.get("afterhours_dollar_volume") for r in ah))),
             ]))
 
@@ -1353,15 +1380,17 @@ class DilutionOverlay:
 
         def color_for(label, value):
             try:
-                v = float(value.rstrip("%"))
-            except ValueError:
+                v = float(value.split()[0].rstrip("%"))
+            except (ValueError, IndexError):
                 return FG
             if "vs PM High" in label or "vs AH High" in label:
                 give_back = -v  # how much of the spike was gone; smaller is better
                 return GREEN if give_back <= 25 else (ORANGE if give_back <= 50 else RED)
+            if "Next Open vs" in label:
+                return GREEN if v >= 0 else (ORANGE if v >= -25 else RED)
             if "<50%" in label:
                 return GREEN if v <= 50 else (ORANGE if v <= 74 else RED)
-            if "After 11am" in label:
+            if "After 11am" in label or "Held Into" in label:
                 return GREEN if v >= 45 else (ORANGE if v >= 21 else RED)
             if "Spike %" in label or "Open→High" in label:
                 return GREEN
