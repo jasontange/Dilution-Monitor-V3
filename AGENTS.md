@@ -149,6 +149,7 @@ Everything is in `das_monitor.py` (~1770 lines). No separate modules, no framewo
 4. In Play Dilution
 5. Reverse Split Status
 6. Recent Offerings
+6a. Equity Restrictions (lock-ups / standstills from `/v1/agreements`; each row links to its filing)
 7. Gap Stats
 8. Session Stats (premarket spikes, intraday runners, after-hours spikes — each sub-section only shows when the ticker has history)
 9. Mgmt Commentary
@@ -166,6 +167,7 @@ Everything is in `das_monitor.py` (~1770 lines). No separate modules, no framewo
 | `/v1/gap-stats` | `fetch_gap_stats()` |
 | `/v1/premarket-stats`, `/v1/intraday-runners`, `/v1/afterhours-stats` | `fetch_session_stats()` — summarized into the Session Stats card |
 | `/v1/offerings` | `fetch_offerings()` |
+| `/v1/agreements` | `fetch_equity_restrictions()` — `agreement_type=equity_restriction` only |
 | `/v1/ownership` | `fetch_ownership()` |
 | `/v1/split-status` | `fetch_split_status()` |
 
