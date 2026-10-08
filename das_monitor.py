@@ -34,7 +34,7 @@ DILUTION_API_URL = "https://eapi.askedgar.io/v1/dilution-rating"
 DILUTION_API_KEY = ASKEDGAR_API_KEY
 NEWS_API_URL = "https://eapi.askedgar.io/v1/news-basic"
 NEWS_API_KEY = ASKEDGAR_API_KEY
-DILDATA_API_URL = "https://eapi.askedgar.io/v1/dilution-data"
+DILDATA_API_URL = "https://eapi.askedgar.io/v1/dilution-data-advanced"
 DILDATA_API_KEY = ASKEDGAR_API_KEY
 SCREENER_API_URL = "https://eapi.askedgar.io/v1/screener"
 SCREENER_API_KEY = ASKEDGAR_API_KEY
@@ -1433,6 +1433,7 @@ class DilutionOverlay:
                     (w.get("filed_at") or "")[:10],
                     in_money,
                     w.get("price_protection", ""),
+                    w.get("owners", ""),
                 )
 
         if convertibles:
@@ -1450,6 +1451,7 @@ class DilutionOverlay:
                     (c.get("filed_at") or "")[:10],
                     in_money,
                     c.get("price_protection", ""),
+                    c.get("owners", ""),
                 )
 
         if dilution_url:
@@ -1509,7 +1511,8 @@ class DilutionOverlay:
             self._bind_card_click(card, url)
 
     def _add_dilution_row(self, parent, details, remaining, price, filed,
-                          price_above=False, price_protection: str = ""):
+                          price_above=False, price_protection: str = "",
+                          owners: str = ""):
         # Green if strike/conv price <= stock price (in the money), orange otherwise
         highlight = "#4CAF50" if price_above else "#FF9800"
 
@@ -1542,6 +1545,13 @@ class DilutionOverlay:
             is_variable = "Variable" in price_protection
             pp_color = RED if is_variable else FG_DIM
             tk.Label(inner, text=f"Protection: {price_protection}", fg=pp_color, bg=BG_ROW,
+                     font=FONT_MONO, anchor="w").pack(fill="x", pady=(2, 0))
+
+        # Line 4: owners (truncated if long — some lists name 20+ holders)
+        owners = (owners or "").strip()
+        if owners:
+            owners_text = owners if len(owners) <= 60 else owners[:57] + "..."
+            tk.Label(inner, text=f"Owners: {owners_text}", fg=FG_DIM, bg=BG_ROW,
                      font=FONT_MONO, anchor="w").pack(fill="x", pady=(2, 0))
 
     # ── Gainers panel ───────────────────────────────────────────────────────
